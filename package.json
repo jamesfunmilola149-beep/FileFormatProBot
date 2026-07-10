@@ -1,0 +1,7 @@
+{
+  "name": "fileformatproboto",
+  "version": "1.0.0",
+  "scripts": {
+    "start": "gunicorn app:app"
+  }
+}
