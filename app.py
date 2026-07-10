@@ -1,11 +1,12 @@
 from flask import Flask, request, jsonify
 import os
+import sys
 
+# Create Flask app
 app = Flask(__name__)
 
-# ============================
-# HEALTH CHECK - MUST WORK
-# ============================
+# Print to log so we can see it's running
+print("🚀 Starting Flask app...", file=sys.stderr)
 
 @app.route('/')
 def index():
@@ -19,101 +20,107 @@ def health():
 def ping():
     return "pong", 200
 
+@app.route('/status')
+def status():
+    return jsonify({
+        "status": "running",
+        "bot": "FileFormatProBot"
+    })
+
 # ============================
-# TELEGRAM BOT - SIMPLE IMPORTS
+# TELEGRAM BOT - ONLY IF TOKEN EXISTS
 # ============================
 
 try:
-    import telegram
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler
-    
     BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+    print(f"🔑 Token found: {bool(BOT_TOKEN)}", file=sys.stderr)
     
-    if BOT_TOKEN:
-        app_bot = Application.builder().token(BOT_TOKEN).build()
+    if BOT_TOKEN and BOT_TOKEN != "your_bot_token_here":
+        from telegram import Update
+        from telegram.ext import Application, CommandHandler, MessageHandler, filters
+        
+        bot_app = Application.builder().token(BOT_TOKEN).build()
         
         # Simple handlers
         async def start(update, context):
             await update.message.reply_text(
                 "👋 Welcome to FileFormatProBot!\n\n"
-                "Send me a file to convert it!"
+                "Send me any file to convert it!"
             )
         
         async def help_cmd(update, context):
             await update.message.reply_text(
                 "Send me a file and I'll convert it!\n"
-                "Commands: /start, /help, /about"
-            )
-        
-        async def about(update, context):
-            await update.message.reply_text(
-                "FileFormatProBot v1.0\n"
-                "Your file converter bot"
+                "Commands: /start, /help"
             )
         
         async def handle_file(update, context):
             file = update.message.document
-            if not file:
+            if file:
+                await update.message.reply_text(
+                    f"📁 Received: {file.file_name}\n\n"
+                    f"✅ File received! Conversion coming soon."
+                )
+            else:
                 await update.message.reply_text("Please send a file.")
-                return
-            
-            keyboard = [
-                [InlineKeyboardButton("📄 PDF", callback_data='pdf')],
-                [InlineKeyboardButton("🖼️ PNG", callback_data='png')],
-                [InlineKeyboardButton("🎵 MP3", callback_data='mp3')],
-            ]
-            await update.message.reply_text(
-                f"Received: {file.file_name}\nChoose format:",
-                reply_markup=InlineKeyboardMarkup(keyboard)
-            )
         
-        async def button(update, context):
-            query = update.callback_query
-            await query.answer()
-            await query.edit_message_text(f"Converting to {query.data}...")
+        bot_app.add_handler(CommandHandler("start", start))
+        bot_app.add_handler(CommandHandler("help", help_cmd))
+        bot_app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
         
-        # Register
-        app_bot.add_handler(CommandHandler("start", start))
-        app_bot.add_handler(CommandHandler("help", help_cmd))
-        app_bot.add_handler(CommandHandler("about", about))
-        app_bot.add_handler(MessageHandler(filters.Document.ALL, handle_file))
-        app_bot.add_handler(CallbackQueryHandler(button))
-        
-        print("✅ Bot initialized")
+        print("✅ Bot initialized successfully", file=sys.stderr)
     else:
-        app_bot = None
-        print("⚠️ No token found")
+        print("⚠️ No valid token found", file=sys.stderr)
+        bot_app = None
         
 except Exception as e:
-    print(f"❌ Bot error: {e}")
-    app_bot = None
+    print(f"❌ Bot error: {e}", file=sys.stderr)
+    bot_app = None
 
 # ============================
-# WEBHOOK
+# WEBHOOK ENDPOINT
 # ============================
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
-    if not app_bot:
-        return jsonify({"ok": False}), 500
+    if not bot_app:
+        return jsonify({"ok": False, "error": "Bot not ready"}), 500
     
     try:
-        import asyncio
         data = request.get_json()
         if not data:
             return jsonify({"ok": False}), 400
         
-        update = Update.de_json(data, app_bot.bot)
-        asyncio.create_task(app_bot.process_update(update))
+        # Process update asynchronously
+        import asyncio
+        update = Update.de_json(data, bot_app.bot)
+        asyncio.create_task(bot_app.process_update(update))
+        
         return jsonify({"ok": True}), 200
     except Exception as e:
+        print(f"Webhook error: {e}", file=sys.stderr)
         return jsonify({"ok": False}), 500
 
+@app.route('/set_webhook')
+def set_webhook():
+    if not bot_app:
+        return jsonify({"error": "Bot not ready"}), 500
+    
+    webhook_url = os.environ.get("WEBHOOK_URL", "")
+    if not webhook_url:
+        return jsonify({"error": "WEBHOOK_URL not set"}), 500
+    
+    try:
+        result = bot_app.bot.set_webhook(webhook_url)
+        return jsonify({"ok": result, "url": webhook_url})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
 # ============================
-# RUN
+# RUN THE APP
 # ============================
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    app.run(host='0.0.0.0', port=port)
+    print(f"🚀 Running on port {port}", file=sys.stderr)
+    app.run(host="0.0.0.0", port=port, debug=False)
