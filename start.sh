@@ -1,3 +1,2 @@
 #!/bin/bash
-echo "Starting Flask app..."
-gunicorn app:app --bind 0.0.0.0:8080 --workers 1 --timeout 30
+python app.py
