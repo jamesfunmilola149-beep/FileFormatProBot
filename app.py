@@ -1,14 +1,19 @@
 import os
 import sys
+import threading
+import asyncio
 from flask import Flask, request, jsonify
 
-print("🚀 Starting app...", file=sys.stderr)
-
+# Create Flask app
 app = Flask(__name__)
+
+# ============================
+# FLASK ROUTES (FOR RAILWAY)
+# ============================
 
 @app.route('/')
 def index():
-    return "OK", 200
+    return "FileFormatProBot is running!", 200
 
 @app.route('/health')
 def health():
@@ -18,55 +23,108 @@ def health():
 def status():
     return jsonify({"status": "running", "bot": "FileFormatProBot"})
 
-# Try to initialize bot
-try:
-    BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-    if BOT_TOKEN:
-        from telegram import Update
+# ============================
+# TELEGRAM BOT (POLLING MODE)
+# ============================
+
+def run_bot():
+    """Run Telegram bot in a separate thread using polling."""
+    try:
+        import asyncio
         from telegram.ext import Application, CommandHandler, MessageHandler, filters
+        from telegram import Update
         
-        bot_app = Application.builder().token(BOT_TOKEN).build()
+        # Get token from environment
+        TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
         
-        async def start(update, context):
-            await update.message.reply_text("👋 Welcome to FileFormatProBot! Send me a file.")
+        if not TOKEN:
+            print("❌ No TELEGRAM_BOT_TOKEN found!", file=sys.stderr)
+            return
         
-        async def help_cmd(update, context):
-            await update.message.reply_text("Send me a file to convert!")
+        print(f"✅ Token found: {TOKEN[:10]}...", file=sys.stderr)
         
-        async def handle_file(update, context):
-            file = update.message.document
-            if file:
-                await update.message.reply_text(f"📁 Received: {file.file_name}")
-            else:
-                await update.message.reply_text("Please send a file.")
+        # Create application
+        bot_app = Application.builder().token(TOKEN).build()
+        
+        # ============================
+        # HANDLERS
+        # ============================
+        
+        async def start(update: Update, context):
+            user = update.effective_user
+            await update.message.reply_text(
+                f"👋 Welcome to FileFormatProBot, {user.first_name}!\n\n"
+                f"📌 Send me any file and I'll convert it!\n"
+                f"Commands: /start, /help, /about"
+            )
+        
+        async def help_command(update: Update, context):
+            await update.message.reply_text(
+                "🆘 Help\n\n"
+                "1. Send me a file\n"
+                "2. I'll convert it for you!\n\n"
+                "Commands: /start, /help, /about"
+            )
+        
+        async def about_command(update: Update, context):
+            await update.message.reply_text(
+                "ℹ️ FileFormatProBot v1.0\n"
+                "File converter for Telegram\n"
+                "Built with Python ❤️"
+            )
+        
+        async def handle_file(update: Update, context):
+            file = update.message.document or update.message.photo or update.message.video or update.message.audio
+            
+            if not file:
+                await update.message.reply_text("❌ Please send a valid file.")
+                return
+            
+            file_name = getattr(file, 'file_name', 'file')
+            await update.message.reply_text(
+                f"📁 Received: {file_name}\n\n"
+                f"✅ File received! I'll convert it for you."
+            )
+        
+        async def echo(update: Update, context):
+            """Echo any message (for testing)."""
+            await update.message.reply_text(f"📩 You said: {update.message.text}")
+        
+        # ============================
+        # REGISTER HANDLERS
+        # ============================
         
         bot_app.add_handler(CommandHandler("start", start))
-        bot_app.add_handler(CommandHandler("help", help_cmd))
-        bot_app.add_handler(MessageHandler(filters.Document.ALL, handle_file))
+        bot_app.add_handler(CommandHandler("help", help_command))
+        bot_app.add_handler(CommandHandler("about", about_command))
+        bot_app.add_handler(MessageHandler(filters.Document.ALL | filters.PHOTO | filters.VIDEO | filters.AUDIO, handle_file))
+        bot_app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, echo))
         
-        print("✅ Bot ready", file=sys.stderr)
-    else:
-        bot_app = None
-        print("⚠️ No token", file=sys.stderr)
-except Exception as e:
-    print(f"❌ Bot error: {e}", file=sys.stderr)
-    bot_app = None
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
-    if not bot_app:
-        return jsonify({"ok": False}), 500
-    try:
-        data = request.get_json()
-        if data:
-            import asyncio
-            update = Update.de_json(data, bot_app.bot)
-            asyncio.create_task(bot_app.process_update(update))
-        return jsonify({"ok": True}), 200
+        print("✅ Bot handlers registered!", file=sys.stderr)
+        print("🚀 Starting bot polling...", file=sys.stderr)
+        
+        # Start polling
+        bot_app.run_polling(allowed_updates=Update.ALL_TYPES)
+        
     except Exception as e:
-        return jsonify({"ok": False}), 500
+        print(f"❌ Bot error: {e}", file=sys.stderr)
+        import traceback
+        traceback.print_exc()
+
+# ============================
+# START BOT IN BACKGROUND
+# ============================
+
+# Start bot thread
+bot_thread = threading.Thread(target=run_bot, daemon=True)
+bot_thread.start()
+print("✅ Bot thread started!", file=sys.stderr)
+
+# ============================
+# RUN FLASK
+# ============================
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8080))
-    print(f"🚀 Running on port {port}", file=sys.stderr)
-    app.run(host="0.0.0.0", port=port, debug=False)
+    print(f"🚀 Flask running on port {port}", file=sys.stderr)
+    app.run(host="0.0.0.0", port=port, debug=False, use_reloader=False)
