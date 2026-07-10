@@ -6,12 +6,3 @@ venv/
 *.log
 .DS_Store
 .railway/
-*.pid
-*.pyo
-*.pyd
-.Python
-*.so
-*.egg
-*.egg-info/
-dist/
-build/
